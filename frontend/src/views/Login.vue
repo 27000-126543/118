@@ -3,7 +3,7 @@
     <div class="login-card">
       <div class="login-header">
         <el-icon :size="64" color="#409eff">
-          <Planet />
+          <Monitor />
         </el-icon>
         <h1 class="title">地核多物理场耦合模拟平台</h1>
         <p class="subtitle">Geodynamo Multi-Physics Simulation Platform</p>
@@ -65,7 +65,7 @@ import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { User, Lock, Planet } from '@element-plus/icons-vue'
+import { User, Lock, Monitor } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const authStore = useAuthStore()

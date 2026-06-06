@@ -28,6 +28,7 @@ from backend.models import (
     Simulation, SimulationStatus, TimeSeriesData, PolarityReversal,
     ParameterAdjustmentLog
 )
+from backend.physics.mesh_and_fields import SphericalShellMesh, FieldInitializer
 
 
 class VisualizationGenerator:
@@ -170,7 +171,37 @@ class VisualizationGenerator:
         reversals: List[Dict[str, Any]]
     ) -> str:
         iterations = [ts['time_step'] for ts in time_series]
-        dipole_moment = [ts.get('dipole_moment', 0) * np.sign(np.random.randn()) for ts in time_series]
+
+        def get_polarity_sign(ts: Dict[str, Any], current_polarity: int) -> int:
+            dipole_z = ts.get('dipole_z')
+            if dipole_z is not None:
+                return 1 if dipole_z >= 0 else -1
+
+            dipole_tilt = ts.get('dipole_tilt', 0)
+            if dipole_tilt is not None:
+                tilt_rad = np.radians(dipole_tilt)
+                z_component = np.cos(tilt_rad)
+                return 1 if z_component >= 0 else -1
+
+            return current_polarity
+
+        dipole_moment = []
+        current_polarity = 1
+        sorted_reversals = sorted(reversals, key=lambda r: r['start_iteration']) if reversals else []
+        rev_idx = 0
+
+        for ts in time_series:
+            time_step = ts['time_step']
+
+            while rev_idx < len(sorted_reversals) and time_step >= sorted_reversals[rev_idx]['start_iteration']:
+                current_polarity *= -1
+                rev_idx += 1
+
+            sign = get_polarity_sign(ts, current_polarity)
+            if sign != current_polarity:
+                current_polarity = sign
+
+            dipole_moment.append(ts.get('dipole_moment', 0) * current_polarity)
 
         fig, ax = plt.subplots(figsize=(12, 6))
         ax.plot(iterations, dipole_moment, 'b-', linewidth=1.5)
@@ -322,6 +353,52 @@ class ReportGenerator:
 
         return data
 
+    def _generate_synthetic_fields(self) -> Dict[str, Any]:
+        outer_radius = self.sim.core_radius or 3.48e6
+        inner_radius = self.sim.inner_core_radius or 1.22e6
+
+        n_radial = 16
+        n_theta = 32
+        n_phi = 64
+
+        mesh = SphericalShellMesh(
+            outer_radius=outer_radius,
+            inner_radius=inner_radius,
+            n_radial=n_radial,
+            n_theta=n_theta,
+            n_phi=n_phi
+        )
+        mesh.generate()
+
+        field_initializer = FieldInitializer(mesh)
+
+        dipole_moment = self.sim.dipole_moment if self.sim.dipole_moment else 8.0e22
+        B_r, B_theta, B_phi = field_initializer.initialize_magnetic_field(
+            dipole_moment=dipole_moment
+        )
+
+        cmb_flux = self.sim.cmb_heat_flux if self.sim.cmb_heat_flux else 0.01
+        icb_flux = self.sim.icb_heat_flux if self.sim.icb_heat_flux else 0.05
+        T = field_initializer.initialize_temperature_field(
+            cmb_heat_flux=cmb_flux,
+            icb_heat_flux=icb_flux
+        )
+
+        r = mesh.r
+        theta = mesh.theta
+        phi = mesh.phi
+
+        return {
+            'B_r': B_r,
+            'B_theta': B_theta,
+            'B_phi': B_phi,
+            'T': T,
+            'r': r,
+            'theta': theta,
+            'phi': phi,
+            'is_synthetic': True
+        }
+
     def generate_report(self) -> str:
         if not self.sim:
             raise ValueError("Simulation not found")
@@ -350,6 +427,21 @@ class ReportGenerator:
             )
             figures['thermal_plumes'] = viz.generate_thermal_plume_plot(
                 fields['T'], r, theta, phi
+            )
+        else:
+            synthetic = self._generate_synthetic_fields()
+            data['fields'] = synthetic
+            data['is_synthetic'] = True
+
+            figures['radial_B'] = viz.generate_magnetic_field_radial_plot(
+                synthetic['B_r'], synthetic['theta'], synthetic['phi']
+            )
+            figures['field_lines'] = viz.generate_magnetic_field_lines_plot(
+                synthetic['B_r'], synthetic['B_theta'], synthetic['B_phi'],
+                synthetic['r'], synthetic['theta']
+            )
+            figures['thermal_plumes'] = viz.generate_thermal_plume_plot(
+                synthetic['T'], synthetic['r'], synthetic['theta'], synthetic['phi']
             )
 
         time_series = data.get('time_series_db', data.get('metrics_history', []))
@@ -397,6 +489,16 @@ class ReportGenerator:
             spaceAfter=5
         ))
 
+        def fmt(value, spec='.3e', default='N/A'):
+            if value is None:
+                return default
+            try:
+                if spec == '':
+                    return str(value)
+                return f"{value:{spec}}"
+            except (TypeError, ValueError):
+                return default
+
         story = []
 
         story.append(Paragraph("地核多物理场耦合模拟报告", styles['CustomTitle']))
@@ -404,22 +506,27 @@ class ReportGenerator:
         story.append(Spacer(1, 20))
 
         story.append(Paragraph(f"模拟名称: {self.sim.name}", styles['Normal']))
-        story.append(Paragraph(f"创建时间: {self.sim.created_at.strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        story.append(Paragraph(f"创建时间: {self.sim.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.sim.created_at else 'N/A'}", styles['Normal']))
         story.append(Paragraph(f"完成时间: {self.sim.completed_at.strftime('%Y-%m-%d %H:%M:%S') if self.sim.completed_at else 'N/A'}", styles['Normal']))
         story.append(Paragraph(f"状态: {self.sim.status}", styles['Normal']))
-        story.append(Paragraph(f"总迭代次数: {self.sim.current_iteration}", styles['Normal']))
+        story.append(Paragraph(f"总迭代次数: {self.sim.current_iteration if self.sim.current_iteration else 'N/A'}", styles['Normal']))
+
+        if data.get('is_synthetic'):
+            story.append(Spacer(1, 10))
+            story.append(Paragraph("注：本场数据为基于模拟参数生成的合成数据，用于演示可视化效果。", styles['Italic']))
+
         story.append(Spacer(1, 20))
 
         story.append(Paragraph("一、输入参数", styles['SectionHeader']))
 
         param_data = [
             ['参数', '值', '单位'],
-            ['地核半径 (Core Radius)', f"{self.sim.core_radius:.3e}", 'm'],
-            ['粘性 (Viscosity)', f"{self.sim.viscosity:.3e}", 'Pa·s'],
-            ['热膨胀系数 (Thermal Expansion)', f"{self.sim.thermal_expansion:.3e}", 'K⁻¹'],
-            ['内核边界热通量 (ICB Heat Flux)', f"{self.sim.icb_heat_flux:.3e}", 'W/m²'],
-            ['核幔边界热通量 (CMB Heat Flux)', f"{self.sim.cmb_heat_flux:.3e}", 'W/m²'],
-            ['内核半径 (Inner Core Radius)', f"{self.sim.inner_core_radius:.3e}", 'm'],
+            ['地核半径 (Core Radius)', fmt(self.sim.core_radius), 'm'],
+            ['粘性 (Viscosity)', fmt(self.sim.viscosity), 'Pa·s'],
+            ['热膨胀系数 (Thermal Expansion)', fmt(self.sim.thermal_expansion), 'K⁻¹'],
+            ['内核边界热通量 (ICB Heat Flux)', fmt(self.sim.icb_heat_flux), 'W/m²'],
+            ['核幔边界热通量 (CMB Heat Flux)', fmt(self.sim.cmb_heat_flux), 'W/m²'],
+            ['内核半径 (Inner Core Radius)', fmt(self.sim.inner_core_radius), 'm'],
         ]
 
         param_table = Table(param_data, colWidths=[2*inch, 1.5*inch, 1*inch])
@@ -439,11 +546,11 @@ class ReportGenerator:
 
         dim_data = [
             ['无量纲数', '值'],
-            ['瑞利数 (Rayleigh Number)', f"{self.sim.rayleigh_number:.3e}"],
-            ['普朗特数 (Prandtl Number)', f"{self.sim.prandtl_number:.3f}"],
-            ['磁雷诺数 (Magnetic Reynolds)', f"{self.sim.magnetic_reynolds_number:.2f}"],
-            ['埃克曼数 (Ekman Number)', f"{self.sim.ekman_number:.3e}"],
-            ['罗斯比数 (Rossby Number)', f"{self.sim.rossby_number:.3e}"],
+            ['瑞利数 (Rayleigh Number)', fmt(self.sim.rayleigh_number)],
+            ['普朗特数 (Prandtl Number)', fmt(self.sim.prandtl_number, '.3f')],
+            ['磁雷诺数 (Magnetic Reynolds)', fmt(self.sim.magnetic_reynolds_number, '.2f')],
+            ['埃克曼数 (Ekman Number)', fmt(self.sim.ekman_number)],
+            ['罗斯比数 (Rossby Number)', fmt(self.sim.rossby_number)],
         ]
 
         dim_table = Table(dim_data, colWidths=[2.5*inch, 2*inch])
@@ -463,14 +570,14 @@ class ReportGenerator:
 
         result_data = [
             ['指标', '值', '单位'],
-            ['总磁能 (Magnetic Energy)', f"{self.sim.total_magnetic_energy:.3e}", 'J'],
-            ['总动能 (Kinetic Energy)', f"{self.sim.total_kinetic_energy:.3e}", 'J'],
-            ['偶极矩 (Dipole Moment)', f"{self.sim.dipole_moment:.3e}", 'A·m²'],
-            ['偶极子倾斜角 (Dipole Tilt)', f"{self.sim.dipole_tilt:.2f}", 'deg'],
-            ['内核对称性 (IC Symmetry)', f"{self.sim.inner_core_symmetry:.4f}", ''],
-            ['磁能生成效率', f"{self.sim.magnetic_energy_generation_efficiency:.4f}", '%'],
-            ['极性反转次数', f"{self.sim.polarity_reversal_count}", ''],
-            ['弛豫时间', f"{self.sim.relaxation_time:.3e}", 's'],
+            ['总磁能 (Magnetic Energy)', fmt(self.sim.total_magnetic_energy), 'J'],
+            ['总动能 (Kinetic Energy)', fmt(self.sim.total_kinetic_energy), 'J'],
+            ['偶极矩 (Dipole Moment)', fmt(self.sim.dipole_moment), 'A·m²'],
+            ['偶极子倾斜角 (Dipole Tilt)', fmt(self.sim.dipole_tilt, '.2f'), 'deg'],
+            ['内核对称性 (IC Symmetry)', fmt(self.sim.inner_core_symmetry, '.4f'), ''],
+            ['磁能生成效率', fmt(self.sim.magnetic_energy_generation_efficiency, '.4f'), '%'],
+            ['极性反转次数', fmt(self.sim.polarity_reversal_count, '', '0'), ''],
+            ['弛豫时间', fmt(self.sim.relaxation_time), 's'],
         ]
 
         result_table = Table(result_data, colWidths=[2*inch, 1.5*inch, 1*inch])
@@ -491,18 +598,19 @@ class ReportGenerator:
             story.append(Paragraph("四、参数调整记录", styles['SectionHeader']))
             for i, adj in enumerate(data['adjustments']):
                 story.append(Paragraph(f"调整 #{i+1}", styles['SubHeader']))
-                story.append(Paragraph(f"时间: {adj['created_at'].strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
-                if adj['old_cmb'] is not None:
+                created_at_str = adj['created_at'].strftime('%Y-%m-%d %H:%M:%S') if adj.get('created_at') else 'N/A'
+                story.append(Paragraph(f"时间: {created_at_str}", styles['Normal']))
+                if adj.get('old_cmb') is not None:
                     story.append(Paragraph(
                         f"CMB热通量: {adj['old_cmb']:.3e} → {adj['new_cmb']:.3e} W/m²",
                         styles['Normal']
                     ))
-                if adj['old_icr'] is not None:
+                if adj.get('old_icr') is not None:
                     story.append(Paragraph(
                         f"内核半径: {adj['old_icr']:.3e} → {adj['new_icr']:.3e} m",
                         styles['Normal']
                     ))
-                story.append(Paragraph(f"原因: {adj['reason']}", styles['Normal']))
+                story.append(Paragraph(f"原因: {adj.get('reason', 'N/A')}", styles['Normal']))
                 story.append(Spacer(1, 10))
 
         story.append(PageBreak())
@@ -571,23 +679,23 @@ class ReportGenerator:
         story.append(PageBreak())
         story.append(Paragraph("六、磁雷诺数监控与预警", styles['SectionHeader']))
         story.append(Paragraph(
-            f"临界磁雷诺数: {self.sim.magnetic_reynolds_critical}",
+            f"临界磁雷诺数: {fmt(self.sim.magnetic_reynolds_critical, '.2f', '50.0')}",
             styles['Normal']
         ))
         story.append(Paragraph(
-            f"最终磁雷诺数: {self.sim.magnetic_reynolds_number:.2f}",
+            f"最终磁雷诺数: {fmt(self.sim.magnetic_reynolds_number, '.2f')}",
             styles['Normal']
         ))
         story.append(Paragraph(
-            f"偶极子倾斜角阈值: {self.sim.dipole_tilt_threshold}°",
+            f"偶极子倾斜角阈值: {fmt(self.sim.dipole_tilt_threshold, '.2f', '10.0')}°",
             styles['Normal']
         ))
         story.append(Paragraph(
-            f"最终偶极子倾斜角: {self.sim.dipole_tilt:.2f}°",
+            f"最终偶极子倾斜角: {fmt(self.sim.dipole_tilt, '.2f')}°",
             styles['Normal']
         ))
         story.append(Paragraph(
-            f"警告次数: {self.sim.warning_count}",
+            f"警告次数: {fmt(self.sim.warning_count, '', '0')}",
             styles['Normal']
         ))
 

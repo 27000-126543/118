@@ -3,7 +3,7 @@
     <el-aside width="240px" class="sidebar">
       <div class="logo">
         <el-icon :size="28" color="#409eff">
-          <Planet />
+          <Monitor />
         </el-icon>
         <span class="logo-text">地核模拟平台</span>
       </div>
@@ -107,7 +107,7 @@ import { UserRole } from '@/types'
 import { monitoringAPI } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  UserFilled, ArrowDown, Planet, DataAnalysis,
+  UserFilled, ArrowDown, Monitor, DataAnalysis,
   Operation, Warning, EditPen, CircleCheck,
   Medal, MagicStick, Document, TrendCharts, User
 } from '@element-plus/icons-vue'

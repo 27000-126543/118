@@ -1,24 +1,48 @@
 version: '3.8'
 
 services:
-  redis:
-    image: redis:7-alpine
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
-      - "6379:6379"
+      - "8000:8000"
     volumes:
-      - redis_data:/data
-
-  postgres:
-    image: postgres:16-alpine
-    ports:
-      - "5432:5432"
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+      - ./reports:/app/reports
+      - ./geodynamo.db:/app/geodynamo.db
     environment:
-      POSTGRES_USER: geodynamo
-      POSTGRES_PASSWORD: geodynamo2024
-      POSTGRES_DB: geodynamo_db
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - DATABASE_URL=sqlite:///./geodynamo.db
+      - SECRET_KEY=geodynamo-secret-key-change-in-production
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=1440
+      - UPLOAD_DIR=./uploads
+      - OUTPUT_DIR=./outputs
+      - REPORT_DIR=./reports
+      - MAX_CONCURRENT_SIMULATIONS=3
+      - CRITICAL_MAGNETIC_REYNOLDS=50.0
+      - MAX_DIPOLE_TILT=10.0
+      - MAX_CONSECUTIVE_FAILURES=3
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r = httpx.get('http://localhost:8000/api/auth/login'); print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
 
 volumes:
-  redis_data:
-  postgres_data:
+  uploads:
+  outputs:
+  reports:
