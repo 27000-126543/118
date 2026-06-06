@@ -15,12 +15,31 @@ if [ "$MODE" = "docker" ]; then
     echo "[Docker 模式] 正在启动所有服务..."
     echo ""
     
+    # 确保Docker CLI在PATH中
+    if ! command -v docker &> /dev/null; then
+        export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
+    fi
+    
+    # 检查Docker daemon是否运行
+    if ! docker ps &> /dev/null; then
+        echo "⚠️  Docker daemon 未运行，正在启动 Docker Desktop..."
+        open -a Docker
+        echo "等待 Docker daemon 启动..."
+        for i in {1..30}; do
+            if docker ps &> /dev/null; then
+                echo "✅ Docker daemon 已启动"
+                break
+            fi
+            sleep 2
+        done
+    fi
+    
     echo "[1/2] 构建并启动 Docker 容器..."
-    docker-compose up -d --build
+    docker compose up -d --build
     
     echo ""
     echo "[2/2] 等待服务就绪..."
-    sleep 10
+    sleep 15
     
     echo ""
     echo "=============================================="
@@ -29,8 +48,8 @@ if [ "$MODE" = "docker" ]; then
     echo "  后端地址: http://localhost:8000"
     echo "  API文档: http://localhost:8000/docs"
     echo ""
-    echo "查看日志: docker-compose logs -f"
-    echo "停止服务: docker-compose down"
+    echo "查看日志: docker compose logs -f"
+    echo "停止服务: docker compose down"
     echo "=============================================="
 else
     echo "[本地模式] 正在启动所有服务..."

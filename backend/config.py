@@ -20,8 +20,16 @@ class Settings(BaseSettings):
         env_file = ".env"
 
     def ensure_dirs(self):
+        import re
         for dir_path in [self.UPLOAD_DIR, self.OUTPUT_DIR, self.REPORT_DIR]:
             os.makedirs(dir_path, exist_ok=True)
+        if 'sqlite' in self.DATABASE_URL:
+            match = re.search(r'sqlite:///(.+)', self.DATABASE_URL)
+            if match:
+                db_path = match.group(1)
+                db_dir = os.path.dirname(db_path)
+                if db_dir:
+                    os.makedirs(db_dir, exist_ok=True)
 
 
 settings = Settings()

@@ -79,8 +79,8 @@ const loginForm = reactive({
 })
 
 const loginRules: FormRules = {
-  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
-  password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
+  username: [{ required: true, message: '请输入用户名', trigger: ['blur', 'change'] }],
+  password: [{ required: true, message: '请输入密码', trigger: ['blur', 'change'] }]
 }
 
 const demoAccounts = [
@@ -93,22 +93,37 @@ const demoAccounts = [
 ]
 
 async function handleLogin() {
-  if (!loginFormRef.value) return
+  console.log('[Login] handleLogin called, username:', loginForm.username, 'password length:', loginForm.password.length)
+  
+  if (!loginFormRef.value) {
+    console.log('[Login] loginFormRef.value is null')
+    return
+  }
 
-  await loginFormRef.value.validate(async (valid) => {
+  try {
+    console.log('[Login] Calling validate...')
+    const valid = await loginFormRef.value.validate()
+    console.log('[Login] Validation result:', valid)
+    
     if (valid) {
       loading.value = true
       try {
+        console.log('[Login] Calling authStore.login...')
         await authStore.login(loginForm.username, loginForm.password)
+        console.log('[Login] Login successful, redirecting to dashboard')
         ElMessage.success('登录成功')
         router.push('/dashboard')
       } catch (error: any) {
+        console.error('[Login] Login error:', error)
         ElMessage.error(error.response?.data?.detail || '登录失败，请检查用户名和密码')
       } finally {
         loading.value = false
       }
     }
-  })
+  } catch (validationError: any) {
+    console.log('[Login] Validation failed:', validationError)
+    ElMessage.error('请输入用户名和密码')
+  }
 }
 </script>
 

@@ -2,7 +2,7 @@ import axios from 'axios'
 import type { AxiosInstance, AxiosResponse } from 'axios'
 
 const api: AxiosInstance = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
   timeout: 60000,
   headers: {
     'Content-Type': 'application/json'
@@ -11,9 +11,13 @@ const api: AxiosInstance = axios.create({
 
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+    try {
+      const token = localStorage.getItem('token')
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`
+      }
+    } catch (e) {
+      console.warn('[API] Failed to access localStorage for token:', e)
     }
     return config
   },
@@ -26,8 +30,12 @@ api.interceptors.response.use(
   (response: AxiosResponse) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
+      try {
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+      } catch (e) {
+        console.warn('[API] Failed to clear localStorage:', e)
+      }
       window.location.href = '/login'
     }
     return Promise.reject(error)

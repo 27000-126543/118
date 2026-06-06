@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p uploads outputs reports
+RUN mkdir -p uploads outputs reports data
 
 EXPOSE 8000
 
